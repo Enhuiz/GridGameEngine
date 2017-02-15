@@ -1,7 +1,5 @@
 (function () {
 
-    let resolution = 30; // number of grids in one dimension
-
     class Drawer {
         constructor(resolution) {
             this.resolution = resolution;
@@ -23,11 +21,9 @@
             this.ctx = this.canvas.getContext('2d');
 
             this.isGridOn = true;
+            this.isFrameOn = true;
 
             this.setSize();
-            if (this.isGridOn) {
-                this._drawGrid();
-            }
         }
 
         setSize() {
@@ -41,7 +37,6 @@
         }
 
         _drawGrid() {
-
             this.ctx.beginPath();
             this.ctx.lineWidth = 0.3;
             this.ctx.lineStyle = "rgb(0, 0, 0)";
@@ -61,9 +56,29 @@
             this.ctx.stroke();
         }
 
+        _drawFrame() {
+            this.ctx.beginPath();
+            this.ctx.lineWidth = 5;
+            this.ctx.lineStyle = "rgb(0, 0, 0)";
+
+
+            for (let y = 0; y <= this.resolution; y += this.resolution) {
+                this.ctx.moveTo(0, y * this.tileSize);
+                this.ctx.lineTo(this.tileSize * this.resolution, y * this.tileSize);
+            }
+
+            // vertical
+            for (let x = 0; x <= this.resolution; x += this.resolution) {
+                this.ctx.moveTo(x * this.tileSize, 0);
+                this.ctx.lineTo(x * this.tileSize, this.tileSize * this.resolution);
+            }
+
+            this.ctx.stroke();
+        }
+
         drawTile(x, y, color) {
             this.ctx.fillStyle = color;
-            this.ctx.fillRect(x * this.tileSize, y * this.tileSize, this.tileSize, this.tileSize);
+            this.ctx.fillRect(x * this.tileSize, y * this.tileSize, this.tileSize + 0.5, this.tileSize + 0.5);
         }
 
         drawTextBox(text, x, y, bgColor, textColor, size = 5, textSize = 1) {
@@ -84,6 +99,9 @@
             this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
             if (this.isGridOn) {
                 this._drawGrid();
+            }
+            if (this.isFrameOn) {
+                this._drawFrame();
             }
         }
     }
@@ -120,22 +138,24 @@
     }
 
     class MessageBox {
-        constructor(text, x, y, bgColor, textColor, size = 5, textSize = 1, duration = 1) {
+        constructor(text, x, y, bgColor, textColor, size = 5, textSize = 1, duration, onVanish) {
             this.text = text;
             this.x = x;
             this.y = y;
             this.bgColor = bgColor;
             this.textColor = textColor;
-            this.size = 5;
-            this.textSize = 1;
+            this.size = size;
+            this.textSize = textSize;
             this.lifeTime = duration;
+            this.onVanish = onVanish;
         }
 
         update(engine) {
             engine.drawer.drawTextBox(this.text, this.x, this.y, this.textColor, this.bgColor, this.size, this.textSize);
             this.lifeTime -= engine.timer.deltaTime;
-            if (this.lifeTime < 0) {
+            if (this.lifeTime != null && this.lifeTime < 0) {
                 engine.destory(this);
+                this.onVanish(engine);
             }
         }
     }
@@ -147,8 +167,8 @@
             this.y = y;
             this.bgColor = bgColor;
             this.textColor = textColor;
-            this.size = 5;
-            this.textSize = 1;
+            this.size = size;
+            this.textSize = textSize;
             this.onclick = onclick;
             this._isEverUp = false;
             this._isHovered = false;
@@ -180,14 +200,15 @@
     }
 
     class Engine {
-        constructor(fps, drawer, input) {
+        constructor(resolution, fps) {
             this.timer = {
-                deltaTime : 0,
-                lastTime : 0,
+                deltaTime: 0,
+                lastTime: (new Date()).getTime() / 1000,
                 fps: fps,
             }
-            this.drawer = drawer;
-            this.input = input;
+            this.resolution = resolution;
+            this.drawer = new Drawer(resolution);
+            this.input = new Input(resolution);
             this.gameObjects = [];
         }
 
@@ -216,37 +237,93 @@
                 return element !== gameObject;
             });
         }
+
+        clearScene() {
+            this.gameObjects = [];
+        }
     }
 
     // example
 
-    class Faller extends Button{
-        constructor(speed, x, y, color, size) {
-            super("", x, y, color, color, size, 0, (engine)=>{
+    let colors = ["#F44336", "#FFEBEE", "#FFCDD2",
+        "#EF9A9A", "#E57373", "#EF5350",
+        "#F44336", "#E53935", "#D32F2F",
+        "#C62828", "#B71C1C", "#FF8A80",
+        "#FF5252", "#FF1744", "#D50000"];
+
+    let sizes = [3, 4, 5, 6, 7, 8, 9, 10];
+
+    let addFaller = function () {
+        let x = Math.floor(Math.random() * (engine.resolution - sizes[sizes.length - 1]));
+        let size = sizes[Math.floor(Math.random() * sizes.length)];
+        engine.instantiate(new Faller(
+            Math.random() * 0.1,
+            Math.random() * 0.1,
+            x,
+            0,
+            size,
+            colors[Math.floor(Math.random() * colors.length)]
+        ));
+    };
+
+    let score = 0;
+
+    class ScoreBox extends MessageBox {
+        constructor(text, x, y, bgColor, textColor, size = 5, textSize = 1) {
+            super(text, x, y, bgColor, textColor, size, textSize);
+        }
+
+        update(engine) {
+            this.text = "Score: " + score;
+            super.update(engine);
+        }
+    }
+
+    let scoreBox = new ScoreBox("Score: " + score, 1, 50, colors[1], colors[0], 9, 1.5);
+
+    let start = function () {
+        engine.clearScene();
+
+        engine.instantiate(new Button("Start!", 20, 20, colors[1], colors[0], 20, 2, (engine) => {
+            engine.clearScene();
+            addFaller();
+            engine.instantiate(scoreBox);
+        }));
+    }
+
+    class Faller extends Button {
+        constructor(speed, acceleration, x, y, size, color) {
+            super("", x, y, color, "#2196F3", size, 1, (engine) => {
                 engine.destory(this);
+                ++score;
+
+                let posterityNumbers = [1, 1, 1, 1, 1, 1, 1, 1, 2];
+                let posterityNumber = posterityNumbers[Math.floor(Math.random() * posterityNumbers.length)]
+                for (let i = 0; i < posterityNumber; ++i) addFaller();
             });
+            this.speed = speed;
+            this.acceleration = acceleration;
         }
 
         update(engine) {
             super.update(engine);
-            y += speed;
-            speed += 0.01 * engine.timer.deltaTime;
+            this.y += this.speed;
+            this.speed += this.acceleration * engine.timer.deltaTime;
+            if (this.y + this.size > engine.resolution) {
+                engine.instantiate(new MessageBox("GAME OVER", 20, 20, colors[0], colors[1], 20, 2, 1, () => {
+                    start();
+                }));
+                engine.destory(this);
+            }
         }
     }
 
-    let engine = new Engine(60, new Drawer(resolution), new Input(resolution));
+    let engine = new Engine(60, 60);
+
+    engine.drawer.isGridOn = false;
 
     engine.start();
 
-    engine.instantiate(new Button('Click Me!',
-        Math.floor(Math.random() * engine.resolution),
-        20,
-        'black',
-        'white',
-        4,
-        0.5,
-        () => {
-            engine.instantiate(new MessageBox("hahahah", 10, 10, 'black', 'white', 8, 1, 0.3));
-            engine.instantiate(new );
-        }));
+    start();
+
 })();
